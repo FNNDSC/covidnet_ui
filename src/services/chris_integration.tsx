@@ -89,10 +89,10 @@ export const modifyDatetime = (oldDay: string): string => {
 class ChrisIntegration {
 
   private static PL_COVIDNET = 'pl-covidnet';
-  private static FS_PLUGIN = 'pl-dircopy'; // 'pl-dircopy';
+  private static FS_PLUGIN = 'pl-dircopy';
   private static MED2IMG = 'pl-med2img';
   private static PL_CT_COVIDNET = 'pl-ct-covidnet';
-  private static PL_PDFGENERATION = 'pl-pdfgeneration';
+  private static PL_PDFGENERATION = 'pl-covidnet-pdfgeneration';
 
   static async getTotalAnalyses(): Promise<number> {
     let client: any = await ChrisAPIClient.getClient();
