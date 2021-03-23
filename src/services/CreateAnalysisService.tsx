@@ -1,46 +1,24 @@
-import { PatientPersonalInfo, SelectedStudies } from "../context/reducers/createAnalysisReducer";
+import { SelectedStudies } from "../context/reducers/createAnalysisReducer";
 import { DcmImage } from "../context/reducers/dicomImagesReducer";
 import { NotificationItem } from "../context/reducers/notificationReducer";
 import ChrisIntegration, { BackendPollResult } from "./chris_integration";
 import NotificationService from "./notificationService";
+import { formatDate } from "../shared/utils";
 
 export interface StudyInstance {
   studyInstanceUID: string;
   studyDescription: string;
   modality: string;
   createdDate: string;
+  setModelType?: (modality: string) => void;
 }
 
 export interface AnalyzedImageResult {
   image: DcmImage,
-  processedResults: BackendPollResult[];
+  processedResults: BackendPollResult;
 }
 
 class CreateAnalysisService {
-
-  static formatDate(dateStr: string): string {
-    const date = new Date(dateStr);
-    return `${date.getFullYear()} ${date.getMonth() + 1} ${date.getDate()}`
-  }
-
-  static formatGender(gender: string): string {
-    return gender.includes('F') ? 'Female' : 'Male';
-  }
-
-  static extractPatientPersonalInfo(dcmImage: DcmImage): PatientPersonalInfo {
-    return {
-      patientName: dcmImage.PatientName,
-      patientAge: dcmImage.PatientAge,
-      patientBirthdate: this.formatDate(dcmImage.PatientBirthDate),
-      patientGender: this.formatGender(dcmImage.PatientSex)
-    }
-  }
-
-  static calculatePatientAge(patientDOB: string): number {
-    const today = new Date();
-    const dob = new Date(patientDOB);
-    return today.getFullYear() - dob.getFullYear();
-  }
 
   static extractStudyInstances(dcmImages: DcmImage[]): StudyInstance[] {
     const studyInstances: StudyInstance[] = [];
@@ -52,7 +30,7 @@ class CreateAnalysisService {
           studyInstanceUID: img.StudyInstanceUID,
           studyDescription: img.StudyDescription,
           modality: img.Modality,
-          createdDate: this.formatDate(img.creation_date)
+          createdDate: formatDate(img.creation_date)
         })
         seenUID[img.StudyInstanceUID] = true;
       }
@@ -84,10 +62,10 @@ class CreateAnalysisService {
     return imgs.filter((img: DcmImage) => this.isImgSelected(selectedStudyUIDs, img));
   }
 
-  static async analyzeImages(dcmImages: DcmImage[]): Promise<NotificationItem[]> {
+  static async analyzeImages(dcmImages: DcmImage[], XrayModel: string, CTModel: string): Promise<NotificationItem[]> {
     const promises = [];
     for (let img of dcmImages) {
-      promises.push(ChrisIntegration.processOneImg(img));
+      promises.push(ChrisIntegration.processOneImg(img, XrayModel, CTModel));
     }
     const processedImages = await Promise.allSettled(promises);
 

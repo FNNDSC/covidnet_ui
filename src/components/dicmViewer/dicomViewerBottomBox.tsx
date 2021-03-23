@@ -2,9 +2,9 @@ import React, { useContext } from "react";
 import { ImageViewerTypes } from "../../context/actions/types";
 import { AppContext } from "../../context/context";
 import { ISeries } from "../../context/reducers/analyseReducer";
-import CreateAnalysisService from "../../services/CreateAnalysisService";
 import { isLargestNumber } from "../pastAnalysis/seriesTable";
-import PredictionCircle from '../PredictionCircle';
+import PredictionCircle from "../PredictionCircle";
+import { formatGender } from "../../shared/utils";
 
 const DicomViewerBottomBox = () => {
   const { state: { imgViewer: { isBottomHided }, prevAnalyses: { selectedImage } }, dispatch } = useContext(AppContext)
@@ -17,7 +17,7 @@ const DicomViewerBottomBox = () => {
   }
 
   const geoOpacityNumbers = (
-    dcmImage: ISeries | null,
+    dcmImage: ISeries | null | undefined,
     geoOpacity: 'geographic' | 'opacity',
     type: 'severity' | 'extentScore'
   ): string => {
@@ -29,15 +29,50 @@ const DicomViewerBottomBox = () => {
 
   //2018 01 05 2y 6m
   const { studyInstance, index } = selectedImage;
-  let imageDetail = studyInstance ? studyInstance.series[index] : null;
+  let imageDetail = studyInstance?.series[index];
+
+  const generateBottomDisplay = (series?: ISeries) => {
+    let bottomDisplay: any = [];
+
+    if (!series) {
+      return;
+    }
+
+     // Dynamically generate the titles to display for the classifications
+      series.classifications.forEach((value: number, key: string) => {
+        bottomDisplay.push(<p key={key}>{key}: <span className="blueText">{value}</span></p>);
+      });
+
+      return bottomDisplay;
+  }
+
+  const generateDisplayCircles = (series?: ISeries) => {
+    let displayCircles: any = [];
+
+    if (!series) {
+      return;
+    } 
+    
+     // Dynamically display the prediction classes/values in the dicomviewerbottombox
+      series.classifications.forEach((value: number, key: string) => {
+        displayCircles.push(<div className="PredictionArea" key={key}>
+        <PredictionCircle largeCircle={isLargestNumber(value, series.classifications)}
+          predictionNumber={value}/>
+        <div className="topMargin">{key}</div>
+      </div>)
+      });
+
+      return displayCircles;
+    }
+
   return (
     <div id="ViewerbottomBox"
       className={`flex_col dicomViewerBottomBox ${!isBottomHided ? 'expandedBottom' : 'collapsedBottom'}`}>
       <div className="hideButton">
         <div className='predictionValues moveUp'>
-          <p>NORMAL <span className="blueText">{imageDetail ? imageDetail.predNormal : 0}</span></p>
-          <p>PNEUMONIA <span className="blueText">{imageDetail ? imageDetail.predPneumonia : 0}</span></p>
-          <p>COVID-19 <span className="blueText">{imageDetail ? imageDetail.predCovid : 0}</span></p>
+
+          {generateBottomDisplay(imageDetail)}
+        
         </div>
         <span className="pointer" onClick={toggle}>{!isBottomHided ? 'hide ' : 'expand '}</span>	&nbsp;
         <span className="pointer" onClick={toggle}>
@@ -52,7 +87,7 @@ const DicomViewerBottomBox = () => {
           <h2>{studyInstance?.dcmImage.PatientName}</h2>
           <p><span>MRN</span> #{studyInstance?.dcmImage.PatientID}</p>
           <p><span>DOB</span> {studyInstance?.dcmImage.PatientBirthDate}</p>
-          <p><span>GENDER</span> {studyInstance ? CreateAnalysisService.formatGender(studyInstance.dcmImage.PatientSex) : ''}</p>
+          <p><span>GENDER</span> {studyInstance ? formatGender(studyInstance.dcmImage.PatientSex) : ''}</p>
         </div>
         <div className="padding-l-2rem">
           <h2>{studyInstance?.dcmImage.StudyDescription}</h2>
@@ -63,21 +98,9 @@ const DicomViewerBottomBox = () => {
         <div className="predictions padding-l-2rem">
           <span className='logo-text'>COVID-Net</span>
           <div className="flex_row">
-            <div className="PredictionArea">
-              <PredictionCircle largeCircle={isLargestNumber(imageDetail?.predCovid, imageDetail?.predPneumonia, imageDetail?.predNormal)}
-                predictionNumber={imageDetail ? imageDetail.predCovid : 0} />
-              <div className="topMargin">COVID-19</div>
-            </div>
-            <div className="PredictionArea padding-l-2rem">
-              <PredictionCircle largeCircle={isLargestNumber(imageDetail?.predPneumonia, imageDetail?.predCovid, imageDetail?.predNormal)}
-                predictionNumber={imageDetail ? imageDetail.predPneumonia : 0} />
-              <div className="topMargin">PNEUMONIA</div>
-            </div>
-            <div className="PredictionArea padding-l-2rem">
-              <PredictionCircle largeCircle={isLargestNumber(imageDetail?.predNormal, imageDetail?.predCovid, imageDetail?.predPneumonia)}
-                predictionNumber={imageDetail ? imageDetail.predNormal : 0} />
-              <div className="topMargin">NORMAL</div>
-            </div>
+          
+            {generateDisplayCircles(imageDetail)}
+
             <div className="padding-l-2rem">
               <p><span>GEOGRAPHIC SEVERITY</span>&nbsp;{geoOpacityNumbers(imageDetail, 'geographic', 'severity')}</p>
               <p><span>GEOGRAPHIC EXTENT</span>&nbsp;{geoOpacityNumbers(imageDetail, 'geographic', 'extentScore')}</p>

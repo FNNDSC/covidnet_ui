@@ -4,7 +4,7 @@
 
 $sectionAreaSpacing: 15px;
 
-.sectionArea {
+.section-area {
   margin-bottom: $sectionAreaSpacing;
 }
 
@@ -17,7 +17,7 @@ $sectionAreaSpacing: 15px;
   font-size: 1.3rem;
 }
 
-.anaylsisTableRow {
+.series-table-row {
   td {
     margin: 0px !important;
     // max-width: 50px;
@@ -62,4 +62,9 @@ $sectionAreaSpacing: 15px;
   .pf-c-button {
     color: black;
   }
+}
+
+@keyframes new-row-highlight-animation {
+  0% { background-color: #BFFFC7 }
+  100% { background-color: #FFFFFF }
 }

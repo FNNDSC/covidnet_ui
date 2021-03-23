@@ -1,46 +1,29 @@
 import { Page } from "@patternfly/react-core";
 import * as React from "react";
-import { Types } from "../../context/actions/types";
-import { AppContext } from "../../context/context";
+import Footer from "./Footer";
 import Header from "./Header";
-import "./layout.scss";
+import "../../assets/scss/layout/layout.scss";
 import NotificationDrawerWrapper from "./NotificationDrawerWrapper";
 
 interface WrapperProps {
-  children: React.ReactNode
+  children: React.ReactNode;
 }
 
 const Wrapper = (props: WrapperProps) => {
-  
-  const { dispatch } = React.useContext(AppContext);
-
   const [isDrawerExpanded, setIsDrawerOpen] = React.useState(false);
-
-  React.useEffect(()=>{
-    const token = window.sessionStorage.getItem('AUTH_TOKEN')
-    if (!!token) {
-      dispatch({
-        type: Types.Login_update,
-        payload: {
-          username: 'chris',
-          password: 'chris1234'
-        }
-      });
-    }
-  },[dispatch])
-
-  const { children } = props
+  const { children } = props;
 
   return (
     <Page
       header={<Header onNotificationBadgeClick={() => setIsDrawerOpen(!isDrawerExpanded)}/>}
       notificationDrawer={<NotificationDrawerWrapper onClose={() => setIsDrawerOpen(!isDrawerExpanded)}/>}
       isNotificationDrawerExpanded={isDrawerExpanded}
+      className="footer-styling"
     >
       {children}
+      <Footer></Footer>
     </Page>
   );
-
 }
 
 export default Wrapper;

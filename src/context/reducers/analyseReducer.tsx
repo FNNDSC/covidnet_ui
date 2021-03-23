@@ -1,19 +1,6 @@
 import { ActionMap, AnalysisTypes } from "../actions/types";
 import { DcmImage } from "./dicomImagesReducer";
 
-// export type IAnalysis = {
-//   image: string;
-//   patientMRN?: number;
-//   createdTime: string;
-//   study: string;
-//   predCovid: number;
-//   predPneumonia: number;
-//   predNormal: number;
-//   imageId: string;
-//   dcmImage: DcmImage | null;
-//   createdAtDateType?: Date; 
-// }
-
 export type riskStratifcation = {
   severity: number,
   extentScore: number
@@ -23,14 +10,12 @@ export type ISeries = {
   covidnetPluginId: number, 
   imageName: string,
   imageId: string,
-  predCovid: number,
-  predPneumonia: number,
-  predNormal: number,
   geographic: riskStratifcation | null,
-  opacity: riskStratifcation | null
+  opacity: riskStratifcation | null,
+  classifications: Map<string, number>, // Holding classification classes/values in map
+  imageUrl?: string,
 }
 
-// change chrisIntegration to return this instead of Ianalysis
 export type StudyInstanceWithSeries = {
   dcmImage: DcmImage,
   analysisCreated: string, 
@@ -44,18 +29,14 @@ export type selectedImageType = {
 
 export type IPrevAnalysesState = {
   listOfAnalysis: StudyInstanceWithSeries[];
-  page: number;
   perpage: number;
-  totalResults: number;
   areNewImgsAvailable: boolean;
   selectedImage: selectedImageType;
 }
 
 export let initialIPrevAnalysesState: IPrevAnalysesState = {
   listOfAnalysis: [],
-  page: 1,
   perpage: 10,
-  totalResults: 50, // fake initial number
   areNewImgsAvailable: false,
   selectedImage: {
     studyInstance: null,
@@ -64,10 +45,8 @@ export let initialIPrevAnalysesState: IPrevAnalysesState = {
 }
 
 type AnalysesPayload = {
-  [AnalysisTypes.Update_page]: { page: number },
   [AnalysisTypes.Update_perpage]: { perpage: number },
   [AnalysisTypes.Update_list]: { list: StudyInstanceWithSeries[] }
-  [AnalysisTypes.Update_total]: { total: number },
   [AnalysisTypes.Update_are_new_imgs_available]: { isAvailable: boolean },
   [AnalysisTypes.Update_selected_image]: { selectedImage: selectedImageType }
 }
@@ -81,11 +60,6 @@ export const analysesReducer = (
   action: AnalysisActions
 ) => {
   switch (action.type) {
-    case AnalysisTypes.Update_page:
-      return {
-        ...state,
-        page: action.payload.page
-      }
     case AnalysisTypes.Update_perpage:
       console.log(action.payload.perpage)
       return {
@@ -96,11 +70,6 @@ export const analysesReducer = (
       return {
         ...state,
         listOfAnalysis: action.payload.list
-      }
-    case AnalysisTypes.Update_total:
-      return {
-        ...state,
-        totalResults: action.payload.total
       }
     case AnalysisTypes.Update_are_new_imgs_available:
       return {

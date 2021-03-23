@@ -7,8 +7,18 @@
 // Page Header:
 // ---------------------------------------------------------
 .header {
+  position: fixed;
+  top: 0em;
+  left: 0em;
+  right: 0em;
+  width: 100%;
+  height: 3.5em;
+  
+  display: flex !important;
+
   .pf-c-page__header-brand-toggle .pf-c-button {
     margin-right: 0;
+
     @media screen and (min-width: 992px) {
       display: none !important;
     }

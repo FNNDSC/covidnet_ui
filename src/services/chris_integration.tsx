@@ -2,6 +2,9 @@ import { IPluginCreateData, PluginInstance } from "@fnndsc/chrisapi";
 import ChrisAPIClient from "../api/chrisapiclient";
 import { ISeries, selectedImageType, StudyInstanceWithSeries } from "../context/reducers/analyseReducer";
 import { DcmImage } from "../context/reducers/dicomImagesReducer";
+import DicomViewerService from "../services/dicomViewerService";
+import { PluginModels } from "../api/app.config";
+import { formatTime, modifyDatetime } from "../shared/utils"
 
 export interface LocalFile {
   name: string;
@@ -16,7 +19,20 @@ interface PlcovidnetData extends IPluginCreateData {
   imagefile: string;
 }
 
+interface PACSFile {
+  url: string;
+  auth: {
+    token: string;
+  };
+  contentType: string;
+  collection: Object;
+  data: DcmImage;
+}
+
 enum PluginPollStatus {
+  CREATED = "created",
+  SCHEDULED = "scheduled",
+  WAITING = "waitingForPrevious",
   STARTED = "started",
   SUCCESS = "finishedSuccessfully",
   ERROR = "finishedWithError",
@@ -62,37 +78,10 @@ export const pollingBackend = async (pluginInstance: PluginInstance): Promise<Ba
   }
 }
 
-export const formatTime = (oldDay: string): string => {
-  return oldDay.split('.')[0]
-}
-
-export const modifyDatetime = (oldDay: string): string => {
-  let today = new Date().setHours(0, 0, 0, 0)
-  let diff = Math.abs(+today - +new Date(oldDay.split('T')[0]))
-  diff = Math.floor(diff / (1000 * 60 * 60 * 24)) // diff is in days, 1ms * 1000 * 60 * 60 * 24
-  let description = "days ago"
-  let rvtVal = `${diff} ${description}`
-  if (diff / 30 >= 1) {
-    description = diff / 30 >= 2 ? "months ago" : "month ago"
-    diff = Math.floor((diff / 30))
-    rvtVal = `${diff} ${description}`
-  } else if (diff / 7 >= 1) {
-    description = diff / 7 >= 2 ? "weeks ago" : "week ago"
-    diff = Math.floor(diff / 7)
-    rvtVal = `${diff} ${description}`
-  } else if (diff < 1) {
-    rvtVal = oldDay.split('T')[1].split('.')[0]
-  }
-  return rvtVal
-}
+// Dynamically loop through all model plug-ins and check if the current plug-in is valid
+export const isModel = (modelName: string): boolean => ((Object.values(PluginModels.XrayModels).includes(modelName) || Object.values(PluginModels.CTModels).includes(modelName)));
 
 class ChrisIntegration {
-
-  private static PL_COVIDNET = 'pl-covidnet';
-  private static FS_PLUGIN = 'pl-dircopy';
-  private static MED2IMG = 'pl-med2img';
-  private static PL_CT_COVIDNET = 'pl-ct-covidnet';
-  private static PL_PDFGENERATION = 'pl-covidnet-pdfgeneration';
 
   static async getTotalAnalyses(): Promise<number> {
     let client: any = await ChrisAPIClient.getClient();
@@ -118,11 +107,9 @@ class ChrisIntegration {
       }, { "fname": files[0].blob })
 
       // create dircopy plugin
-      const dircopyPlugin = (await client.getPlugins({ 'name_exact': this.FS_PLUGIN })).getItems()[0];
+      const dircopyPlugin = (await client.getPlugins({ 'name_exact': PluginModels.Plugins.FS_PLUGIN })).getItems()[0];
       const data: DirCreateData = { "dir": uploadedFile.data.fname }
       const pluginInstance: PluginInstance = await client.createPluginInstance(dircopyPlugin.data.id, data);
-
-      await pollingBackend(pluginInstance)
 
       const filename = uploadedFile.data.fname.split('/').pop()
       // create covidnet plugin
@@ -131,7 +118,7 @@ class ChrisIntegration {
         // title: this.PL_COVIDNET,
         imagefile: filename
       }
-      const plcovidnet = await client.getPlugins({ "name_exact": "pl-covidnet" })
+      const plcovidnet = await client.getPlugins({ "name_exact": PluginModels.XrayModels["COVID-Net"] })
       const covidnetPlugin = plcovidnet.getItems()[0]
       const covidnetInstance: PluginInstance = await client.createPluginInstance(covidnetPlugin.data.id, plcovidnet_data);
       console.log("Covidnet Running")
@@ -143,22 +130,23 @@ class ChrisIntegration {
     return true;
   }
 
-  static async processOneImg(img: DcmImage): Promise<BackendPollResult[]> {
+  static async processOneImg(img: DcmImage, chosenXrayModel: string, chosenCTModel: string): Promise<BackendPollResult> {
     let client: any = await ChrisAPIClient.getClient();
+
+    let XRayModel: string = PluginModels.XrayModels[chosenXrayModel]; // Configuring ChRIS to use the correct Xray model
+    let CTModel: string = PluginModels.CTModels[chosenCTModel]; // Configuring ChRIS to use the correct CT model
+
     try {
       console.log(img.fname)
-      const dircopyPlugin = (await client.getPlugins({ "name_exact": this.FS_PLUGIN })).getItems()[0];
-      // const params = await dircopyPlugin.getPluginParameters();
+
+      // PL-DIRCOPY
+      const dircopyPlugin = (await client.getPlugins({ "name_exact": PluginModels.Plugins.FS_PLUGIN })).getItems()[0];
       const data: DirCreateData = { "dir": img.fname };
       const dircopyPluginInstance: PluginInstance = await client.createPluginInstance(dircopyPlugin.data.id, data);
+      console.log("PL-DIRCOPY task sent into the task queue")
 
-      const dirCopyResult = await pollingBackend(dircopyPluginInstance);
-      if (dirCopyResult.error) {
-        return [dirCopyResult];
-      }
-
-      //med2img
-      const imgConverterPlugin = (await client.getPlugins({ "name_exact": this.MED2IMG })).getItems()[0];
+      // PL-MED2IMG
+      const imgConverterPlugin = (await client.getPlugins({ "name_exact": PluginModels.Plugins.MED2IMG })).getItems()[0];
       const filename = img.fname.split('/').pop()?.split('.')[0]
       console.log(filename)
       const imgData = {
@@ -167,43 +155,46 @@ class ChrisIntegration {
         outputFileStem: `${filename}.jpg`, //-slice000
         previous_id: dircopyPluginInstance.data.id
       }
+
       if (imgConverterPlugin === undefined || imgConverterPlugin.data === undefined) {
-        return [{
-          plugin: this.MED2IMG,
+        return {
+          plugin: PluginModels.Plugins.MED2IMG,
           error: new Error('not registered')
-        }];
-      }
-      const imgConverterInstance: PluginInstance = await client.createPluginInstance(imgConverterPlugin.data.id, imgData);
-      console.log("Converter Running")
-      const imgConverterResult = await pollingBackend(imgConverterInstance);
-      if (imgConverterResult.error) {
-        return [imgConverterResult];
+        };
       }
 
-      const pluginNeeded = img.Modality === 'CR' ? this.PL_COVIDNET : this.PL_CT_COVIDNET;
+      const imgConverterInstance: PluginInstance = await client.createPluginInstance(imgConverterPlugin.data.id, imgData);
+      console.log("PL-MED2IMG task sent into the task queue")
+
+      const pluginNeeded = img.Modality === 'CR' ? XRayModel : CTModel;
       const covidnetPlugin = (await client.getPlugins({ "name_exact": pluginNeeded })).getItems()[0];
       const plcovidnet_data: PlcovidnetData = {
         previous_id: imgConverterInstance.data.id,
         title: img.fname,
         imagefile: `${filename}.jpg`
       }
+
       if (covidnetPlugin === undefined || covidnetPlugin.data === undefined) {
-        return [{
+        return {
           plugin: pluginNeeded,
           error: new Error('not registered')
-        }];
+        };
       }
       const covidnetInstance: PluginInstance = await client.createPluginInstance(covidnetPlugin.data.id, plcovidnet_data);
-      console.log("Covidnet Running");
+      console.log(`${pluginNeeded.toUpperCase()} task sent into the task queue`)
+
       const covidnetResult = await pollingBackend(covidnetInstance);
       if (covidnetResult.error) {
-        return [covidnetResult];
+        return covidnetResult;
       }
 
-      return [dirCopyResult, imgConverterResult, covidnetResult];
+      return covidnetResult;
     } catch (err) {
       console.log(err);
-      return [];
+      return {
+        plugin: 'plugins',
+        error: new Error('failed')
+      };
     }
   }
 
@@ -212,108 +203,178 @@ class ChrisIntegration {
     return (await client.getPACSFiles({ fname_exact: imgTitle })).data
   }
 
-  static async getPastAnalaysis(page: number, perpage: number): Promise<StudyInstanceWithSeries[]> {
+  static async getFilePathNameByUID(StudyInstanceUID: string, SeriesInstanceUID: string): Promise<string> {
+    let client: any = await ChrisAPIClient.getClient();
+    
+    const res = await client.getPACSFiles({
+      StudyInstanceUID,
+      SeriesInstanceUID,
+      limit: 1
+    });
+    const patientImages: DcmImage = res.getItems().map((img: PACSFile) => img.data)?.[0];
+    return patientImages.fname;
+  }
+
+  /**
+   * Gets the ID of the latest Feed stored in Swift
+   */
+  static async getLatestFeedId(): Promise<number> {
+    const client: any = ChrisAPIClient.getClient();
+    const feeds = await client.getFeeds({
+      limit: 1,
+      offset: 0,
+    });
+    return feeds.getItems()?.[0]?.data?.id;
+  }
+
+  /**
+   * Starting at the provided offset, coninuously fetches Feeds from Swift until able to return an array of
+   * StudyInstanceWithSeries of the provided size (limit)
+   * @param {number} offset Page offset
+   * @param {number} limit Desired number of StudyInstanceWithSeries to receive
+   * @param {number} max_id Maximum Feed ID search parameter
+   */
+  static async getPastAnalyses(offset: number, limit: number, max_id?: number): Promise<[StudyInstanceWithSeries[], number, boolean]> {
     const pastAnalysis: StudyInstanceWithSeries[] = [];
     const pastAnalysisMap: { [timeAndStudyUID: string]: { indexInArr: number } } = {}
 
-    // since we want to have offset = 0 for page 1
-    --page;
     const client: any = ChrisAPIClient.getClient();
-    const feeds = await client.getFeeds({
-      limit: perpage,
-      offset: page * perpage,
-    });
-    const feedArray = feeds.getItems();
-    for (let feed of feedArray) {
-      const pluginInstances = await feed.getPluginInstances({
-        limit: 25,
-        offset: 0
-      });
-      // iterate it over all feeds
-      const pluginlists = pluginInstances.getItems()
-      for (let plugin of pluginlists) {
-        let studyInstance: StudyInstanceWithSeries | null = null
-        // ignore plugins that are not pl-covidnet or pl-ct-covidnet
-        if (plugin.data.plugin_name !== this.PL_COVIDNET && plugin.data.plugin_name !== this.PL_CT_COVIDNET) continue;
 
-        // get dicom image data
-        if (plugin.data.title !== '') {
-          const imgDatas: DcmImage[] = await this.getDcmImageDetailByFilePathName(plugin.data.title);
-          if (imgDatas.length > 0) {
-            // use dircopy start time to check
-            for (let findDircopy of pluginlists) {
-              if (findDircopy.data.plugin_name === this.FS_PLUGIN) {
-                const startedTime = formatTime(findDircopy.data.start_date);
-                const possibileIndex = startedTime + imgDatas[0].StudyInstanceUID;
-                // already exists so push it to te seriesList
-                if (!!pastAnalysisMap[possibileIndex]) {
-                  studyInstance = pastAnalysis[pastAnalysisMap[possibileIndex].indexInArr]
-                } else { // doesn't already exist so we create one
-                  studyInstance = {
-                    dcmImage: imgDatas[0],
-                    analysisCreated: modifyDatetime(findDircopy.data.start_date),
-                    series: []
+    // Indicates when the last Feed on Swift has been reached to prevent further fetching
+    let isAtEndOfFeeds = false;
+
+    // Aim to have 1 extra StudyInstanceWithSeries to ensure that Feeds associated with the same Study grouping 
+    // are not separated across pages. The extra StudyInstanceWithSeries will be discarded at the end
+    let fetchLimit = limit + 1;
+
+    let curOffset = offset;
+
+    // Keep fetching Feeds until the desired number of StudyInstanceWithSeries is collected OR the end of Feeds has been reached
+    while (pastAnalysis.length < limit + 1 && !isAtEndOfFeeds) {
+      const feeds = await client.getFeeds({
+        limit: fetchLimit,
+        offset: curOffset,
+        max_id
+      });
+      const feedArray = feeds.getItems();
+      
+      curOffset += fetchLimit;
+  
+      // If fetch returns less feeds than requested, then the end of the list of Feeds has been reached
+      isAtEndOfFeeds = feedArray.length < fetchLimit;
+      
+      for (let feed of feedArray) {
+        const pluginInstances = await feed.getPluginInstances({
+          limit: 25,
+          offset: 0
+        });
+        // iterate it over all feeds
+        const pluginlists = pluginInstances.getItems();
+        for (let plugin of pluginlists) {
+          let studyInstance: StudyInstanceWithSeries | null = null;
+          // ignore plugins that are not models
+          if (!isModel(plugin.data.plugin_name)) continue; 
+          // get dicom image data
+          if (plugin.data.title !== '') {
+            const imgDatas: DcmImage[] = await this.getDcmImageDetailByFilePathName(plugin.data.title);
+            if (imgDatas.length > 0) {
+              // use dircopy start time to check
+              for (let findDircopy of pluginlists) {
+                if (findDircopy.data.plugin_name === PluginModels.Plugins.FS_PLUGIN) {
+                  const startedTime = formatTime(findDircopy.data.start_date);
+                  const possibileIndex = startedTime + imgDatas[0].StudyInstanceUID;
+                  // already exists so push it to te seriesList
+                  if (!!pastAnalysisMap[possibileIndex]) {
+                    studyInstance = pastAnalysis[pastAnalysisMap[possibileIndex].indexInArr];
+                  } else { // doesn't already exist so we create one
+                    studyInstance = {
+                      dcmImage: imgDatas[0],
+                      analysisCreated: modifyDatetime(findDircopy.data.start_date),
+                      series: []
+                    };
+                    // first update map with the index then push to the result array
+                    pastAnalysisMap[possibileIndex] = { indexInArr: pastAnalysis.length };
+                    pastAnalysis.push(studyInstance);
                   }
-                  // first update map with the index then push to the result array
-                  pastAnalysisMap[possibileIndex] = { indexInArr: pastAnalysis.length };
-                  pastAnalysis.push(studyInstance)
                 }
               }
             }
+          } else {
+            // TODO: investigate else case
+            return [[], curOffset, isAtEndOfFeeds];
           }
-        } else {
-          return [];
-        }
-
-        const pluginInstanceFiles = await plugin.getFiles({
-          limit: 25,
-          offset: 0,
-        });
-        const newSeries: ISeries = {
-          covidnetPluginId: plugin.data.id,
-          imageName: '',
-          imageId: '',
-          predCovid: 0,
-          predPneumonia: 0,
-          predNormal: 0,
-          geographic: null,
-          opacity: null
-        }
-        for (let fileObj of pluginInstanceFiles.getItems()) {
-          if (fileObj.data.fname.includes('prediction') && fileObj.data.fname.includes('json')) {
-            let content = await this.fetchJsonFiles(fileObj.data.id)
-            const formatNumber = (num: any) => (Math.round(Number(num) * 10000) / 100) // to round to 2 decimal place percentage
-            newSeries.predCovid = formatNumber(content['COVID-19'])
-            newSeries.predNormal = formatNumber(content['Normal'])
-            newSeries.predPneumonia = formatNumber(content['Pneumonia'])
-          } else if (fileObj.data.fname.includes('severity.json')) {
-            let content = await this.fetchJsonFiles(fileObj.data.id)
-            newSeries.geographic = {
-              severity: content['Geographic severity'],
-              extentScore: content['Geographic extent score']
+  
+          const pluginInstanceFiles = await plugin.getFiles({
+            limit: 25,
+            offset: 0,
+          });
+  
+          const newSeries: ISeries = {
+            covidnetPluginId: plugin.data.id,
+            imageName: '',
+            imageId: '',
+            classifications: new Map<string, number>(),
+            geographic: null,
+            opacity: null,
+            imageUrl: '',
+          };
+  
+          for (let fileObj of pluginInstanceFiles.getItems()) {
+            if (fileObj.data.fname.includes("prediction") && fileObj.data.fname.includes("json")) {
+              let content = await this.fetchJsonFiles(fileObj.data.id);
+              const formatNumber = (num: any) => (Math.round(Number(num) * 10000) / 100); // to round to 2 decimal place percentage
+  
+              Object.keys(content).forEach((key: string) => { // Reading in the classifcation titles and values
+                if ((key !== 'prediction') && (key !== "Prediction")) {
+                  if ((key !== '**DISCLAIMER**') && (!isNaN(content[key]))) {
+                    newSeries.classifications.set(key, formatNumber(content[key]));
+                  }
+                }
+              });
+  
+            } else if (fileObj.data.fname.includes('severity.json')) {
+              let content = await this.fetchJsonFiles(fileObj.data.id)
+              newSeries.geographic = {
+                severity: content['Geographic severity'],
+                extentScore: content['Geographic extent score']
+              }
+              newSeries.opacity = {
+                severity: content['Opacity severity'],
+                extentScore: content['Opacity extent score']
+              }
+            } else if (!fileObj.data.fname.includes('json')) {
+              newSeries.imageId = fileObj.data.id;
+              
+              // Fetch image URL
+              if (newSeries.imageId) {
+                const imgBlob = await DicomViewerService.fetchImageFile(newSeries.imageId);
+                const urlCreator = window.URL || window.webkitURL;
+                newSeries.imageUrl = urlCreator.createObjectURL(imgBlob);
+              }
+  
+              // get dcmImageId from dircopy
+              const dircopyPlugin = pluginlists[pluginlists.findIndex((plugin: any) => plugin.data.plugin_name === PluginModels.Plugins.FS_PLUGIN)]
+              const dircopyFiles = (await dircopyPlugin.getFiles({
+                limit: 100,
+                offset: 0
+              })).data;
+              const dcmImageFile = dircopyFiles[dircopyFiles.findIndex((file: any) => file.fname.includes('.dcm'))]
+              newSeries.imageName = dcmImageFile.fname;
             }
-            newSeries.opacity = {
-              severity: content['Opacity severity'],
-              extentScore: content['Opacity extent score']
-            }
-          } else if (!fileObj.data.fname.includes('json')) { // fetch image
-            newSeries.imageId = fileObj.data.id;
-
-            // get dcmImageId from dircopy
-            const dircopyPlugin = pluginlists[pluginlists.findIndex((plugin: any) => plugin.data.plugin_name === this.FS_PLUGIN)]
-            const dircopyFiles = (await dircopyPlugin.getFiles({
-              limit: 100,
-              offset: 0
-            })).data;
-            const dcmImageFile = dircopyFiles[dircopyFiles.findIndex((file: any) => file.fname.includes('.dcm'))]
-            newSeries.imageName = dcmImageFile.fname;
-            // newSeries.imageId = dcmImageFile.id;
           }
+          
+          if (studyInstance) studyInstance.series.push(newSeries);
         }
-        if (studyInstance) studyInstance.series.push(newSeries)
       }
+
+      // Update fetchLimit to be remaining number of StudyInstanceWithSeries desired
+      fetchLimit = limit + 1 - pastAnalysis.length;
     }
-    return pastAnalysis;
+
+    // If the end of Feeds was reached, return all collected StudyInstanceWithSeries, otherwise, discard the last extra Study
+    const pastAnalysesToReturn = isAtEndOfFeeds ? pastAnalysis : pastAnalysis.slice(0, -1);
+
+    return [pastAnalysesToReturn, curOffset - 1, isAtEndOfFeeds];
   }
 
   static async fetchJsonFiles(fileId: string): Promise<{ [field: string]: any }> {
@@ -322,17 +383,19 @@ class ChrisIntegration {
     let file = await client.getFile(fileId);
     let blob = await file.getFileBlob();
     let content = await blob.text();
-    return JSON.parse(content)
+    return JSON.parse(content);
   }
 
   static async fetchPacFiles(patientID: any): Promise<DcmImage[]> {
+    if (!patientID) return [];
+    
     let client: any = await ChrisAPIClient.getClient();
 
     const res = await client.getPACSFiles({
       PatientID: patientID,
       limit: 1000
     })
-    const patientImages: DcmImage[] = res.getItems().map((img: any) => img.data)
+    const patientImages: DcmImage[] = res.getItems().map((img: PACSFile) => img.data)
     return patientImages;
   }
 
@@ -363,7 +426,7 @@ class ChrisIntegration {
       }
     })
     if (!imgName) return;
-    const pdfgenerationPlugin = (await client.getPlugins({ "name_exact": this.PL_PDFGENERATION })).getItems()[0];
+    const pdfgenerationPlugin = (await client.getPlugins({ "name_exact": PluginModels.Plugins.PDFGENERATION })).getItems()[0];
     const pluginData = {
       imagefile: imgName,
       previous_id: covidnetPluginId,

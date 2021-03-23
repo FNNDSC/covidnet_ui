@@ -12,6 +12,7 @@ import { CreateAnalysisTypes, DicomImagesTypes } from "../context/actions/types"
 import { AppContext } from "../context/context";
 import RightArrowButton from "../pages/CreateAnalysisPage/RightArrowButton";
 import chris_integration from '../services/chris_integration';
+import pacs_integration from '../services/pacs_integration';
 import CreateAnalysisService, { StudyInstance } from "../services/CreateAnalysisService";
 
 enum PrivacyLevel {
@@ -24,15 +25,14 @@ interface PatientLookupProps {
 }
 
 const PatientLookup = (props: PatientLookupProps) => {
-  const { state: {createAnalysis}, dispatch } = useContext(AppContext);
+  const { dispatch } = useContext(AppContext);
   const [privacyLevel, setPrivacyLevel] = useState(PrivacyLevel.ANONYMIZE_ALL_DATA)
+  const [patientID, setPatientID] = useState<string>("");
   const history = useHistory();
 
-  // dropdown
   const [isDropDownOpen, setDropDownOpen] = React.useState(false);
 
   const onSelect = (value: any) => {
-    console.log(value)
     setDropDownOpen(!isDropDownOpen);
     onFocus();
   }
@@ -43,31 +43,38 @@ const PatientLookup = (props: PatientLookupProps) => {
   };
 
   const newLookup = async () => {
-    const dcmImages = await chris_integration.fetchPacFiles(createAnalysis.patientID);
-    dispatch({
-      type: DicomImagesTypes.UpdateImages,
-      payload: {
-        images: dcmImages
-      }
-    })
-    const studyInstances: StudyInstance[] = CreateAnalysisService.extractStudyInstances(dcmImages);
-    if (studyInstances.length > 0) {
-      dispatch({
-        type: CreateAnalysisTypes.UpdateCurrSelectedStudyUID,
-        payload: {
-          studyUID: studyInstances[0].studyInstanceUID
-        }
-      })
-    }
-  }
-
-  const setPatientid = (value: string) => {
     dispatch({
       type: CreateAnalysisTypes.Update_patient_ID,
       payload: {
-        patientID: value
+        patientID
       }
-    })
+    });
+
+    try {
+      const dcmImages = process.env.REACT_APP_CHRIS_UI_DICOM_SOURCE === 'pacs' ?
+        await pacs_integration.queryPatientFiles(patientID) :
+        await chris_integration.fetchPacFiles(patientID);
+
+      dispatch({
+        type: DicomImagesTypes.Update_all_images,
+        payload: {
+          images: dcmImages
+        }
+      });
+      
+      // Select first study instance by default
+      const studyInstances: StudyInstance[] = CreateAnalysisService.extractStudyInstances(dcmImages);
+      if (studyInstances.length > 0) {
+        dispatch({
+          type: CreateAnalysisTypes.UpdateCurrSelectedStudyUID,
+          payload: {
+            studyUID: studyInstances[0].studyInstanceUID
+          }
+        })
+      }
+    } catch (err) {
+      console.error(err);
+    }
   }
 
   const dropdownItems = [
@@ -97,7 +104,7 @@ const PatientLookup = (props: PatientLookupProps) => {
       <div className="InputRow">
         <div className="InputRowField">
           <label>Patient MRN</label>
-          <TextInput value={createAnalysis.patientID} type="text" onChange={setPatientid} aria-label="text input example" />
+          <TextInput value={patientID} type="text" onChange={setPatientID} aria-label="text input example" />
         </div>
         <div className="InputRowField">
           <label>Privacy Level</label>
