@@ -1,17 +1,18 @@
-import { Drawer, DrawerActions, DrawerCloseButton, DrawerContent, DrawerContentBody, DrawerHead, DrawerPanelContent, Modal } from '@patternfly/react-core';
+import { Drawer, DrawerActions, DrawerCloseButton, DrawerContent, DrawerContentBody, DrawerHead, DrawerPanelContent, Modal } from "@patternfly/react-core";
 import React, { useContext, useState } from "react";
 import { useHistory } from "react-router-dom";
-import { StagingDcmImagesTypes, CreateAnalysisTypes } from '../../context/actions/types';
-import { AppContext } from '../../context/context';
+import { CreateAnalysisTypes, NotificationActionTypes } from "../../context/actions/types";
+import { AppContext } from "../../context/context";
 import { DcmImage } from "../../context/reducers/dicomImagesReducer";
 import CreateAnalysisService from "../../services/CreateAnalysisService";
-import ConfirmAnalysis from './ConfirmAnalysis';
+import ConfirmAnalysis from "./ConfirmAnalysis";
 import CreateAnalysisDetail from "./CreateAnalysisDetail";
-import pacs_integration from '../../services/pacs_integration';
-import chris_integration from '../../services/chris_integration';
+import pacs_integration from "../../services/pacs_integration";
+import chris_integration from "../../services/chris_integration";
+import { NotificationItem } from "../../context/reducers/notificationReducer";
 
 const CreateAnalysisWrapper = () => {
-  const { state: { dcmImages, createAnalysis: { selectedStudyUIDs } }, dispatch } = useContext(AppContext);
+  const { state: { dcmImages, models, createAnalysis: { selectedStudyUIDs } }, dispatch } = useContext(AppContext);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const history = useHistory();
@@ -22,7 +23,7 @@ const CreateAnalysisWrapper = () => {
       setIsModalOpen(true);
       return;
     }
-    
+
     if (process.env.REACT_APP_CHRIS_UI_DICOM_SOURCE === 'pacs') {
       // Send request to have DICOM files pushed from PACS server to pypx
       const retrievePromises: Promise<boolean>[] = [];
@@ -35,7 +36,7 @@ const CreateAnalysisWrapper = () => {
           console.error('Unable to initiate PACS retrieve');
           return;
         }
-      })
+      });
 
       // Update fname property of each image to be the filepath in Swift filesystem
       try {
@@ -48,15 +49,19 @@ const CreateAnalysisWrapper = () => {
       }
     }
 
-    // Updating staging images
-    dispatch({
-      type: StagingDcmImagesTypes.UpdateStaging,
-      payload: { imgs: imagesSelected }
-    });
-
     dispatch({
       type: CreateAnalysisTypes.Clear_selected_studies_UID
     });
+
+    // Processing the images
+    // Passing selected models to Chris_Integration for image analysis
+    const notifications: NotificationItem[] = await CreateAnalysisService.analyzeImages(imagesSelected, models.xrayModel, models.ctModel);
+
+    dispatch({
+      type: NotificationActionTypes.SEND,
+      payload: { notifications }
+    });
+    
     history.push("/");
   }
 

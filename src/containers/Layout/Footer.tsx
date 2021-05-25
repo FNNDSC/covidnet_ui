@@ -4,8 +4,6 @@ import {
   PageHeaderToolsItem
 } from "@patternfly/react-core";
 import React from "react";
-import { useHistory } from "react-router-dom";
-import logo from "../../assets/images/logo-white.png";
 
 interface FooterProps {
   isLogin?: boolean
@@ -13,24 +11,24 @@ interface FooterProps {
 
 
 const Footer: React.FC<FooterProps> = ({ isLogin }) => {
-  const history = useHistory();
 
   const pageToolbar = (
     <div className="footer-content">
       <PageHeaderTools>
         <PageHeaderToolsItem>
-          <p className="footer-text">An open-source neural network for disease detection created by&nbsp;
+          <p className="footer-text">An open source clinical decision support UI platform created by&nbsp;
             <a href="https://www.darwinai.com/" target="_blank" rel="noopener noreferrer">DarwinAI</a>,&nbsp;
-            <a href="https://chrisproject.org/" target="_blank" rel="noopener noreferrer">ChRIS</a>, and&nbsp;
-            <a href="https://redhat.com/chris" target="_blank" rel="noopener noreferrer">RedHat</a>&nbsp;</p>
+            <a href="https://chrisproject.org/" target="_blank" rel="noopener noreferrer">BCH/ChRIS</a>, and&nbsp;
+            <a href="https://redhat.com/chris" target="_blank" rel="noopener noreferrer">Red Hat</a>&nbsp;</p>
         </PageHeaderToolsItem>
       </PageHeaderTools>
+      <span>|</span>
       <PageHeaderTools>
         <PageHeaderToolsItem className="footer-link">
           <p className="footer-text">
-            Find more about&nbsp;
+            Learn more about&nbsp;
             <a href="https://alexswong.github.io/COVID-Net/" target="_blank" rel="noopener noreferrer">COVID-Net</a>
-            &nbsp;and&nbsp;
+            &nbsp;and the&nbsp;
             <a href="https://github.com/darwinai/covidnet_ui" target="_blank" rel="noopener noreferrer">COVID-Net UI</a>
           </p>
         </PageHeaderToolsItem>
