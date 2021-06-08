@@ -14,6 +14,7 @@
     "@patternfly/react-core": "^4.84.4",
     "@patternfly/react-styles": "^4.7.22",
     "@patternfly/react-table": "^4.19.45",
+    "@patternfly/patternfly": "^4.108.2",
     "@types/c3": "^0.6.3",
     "@types/classnames": "^2.2.9",
     "@types/d3": "^5.7.1",
