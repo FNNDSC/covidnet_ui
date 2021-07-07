@@ -158,6 +158,15 @@ class ChrisIntegration {
     return true;
   }
 
+  /***
+   *  Return a consistent feed name based on the provided patientID/MRN
+   *  @param {string} patientID - The MRN of the patient
+   *  @returns {string} The name of the corresponding feed as established by the convention in this function
+   */
+  static getFeedName(patientID: string): string {
+      return `COVIDNET_Analysis_of_${patientID}`;
+  }
+
   /**
    * Initiate pl-dircopy, pl-med2img, and the appropriate COVID-Net plugin in sequence on the provided DcmImage
    * @param {DcmImage} img - The DICOM data to run the analysis on
@@ -176,7 +185,7 @@ class ChrisIntegration {
 
       // PL-DIRCOPY
       const dircopyPlugin = (await client.getPlugins({ "name_exact": PluginModels.Plugins.FS_PLUGIN })).getItems()[0];
-      const data: DirCreateData = { "dir": img.fname, title: img.PatientID };
+      const data: DirCreateData = { "dir": img.fname, title: this.getFeedName(img.PatientID) };
       const dircopyPluginInstance: PluginInstance = await client.createPluginInstance(dircopyPlugin.data.id, data);
       const feed = await dircopyPluginInstance.getFeed();
       const note = await feed?.getNote();
@@ -191,12 +200,13 @@ class ChrisIntegration {
 
       // PL-MED2IMG
       const imgConverterPlugin = (await client.getPlugins({ "name_exact": PluginModels.Plugins.MED2IMG })).getItems()[0];
-      const filename = img.fname.split('/').pop()?.split('.')[0];
-      console.log(filename);
+      const filename = img.fname.split('/').pop();
+      const filenameWithoutExtension = filename?.split('.')[0];
       const imgData = {
-        inputFile: img.fname.split('/').pop(),
+        title: filename,
+        inputFile: filename,
         sliceToConvert: 0,
-        outputFileStem: `${filename}.jpg`, //-slice000
+        outputFileStem: `${filenameWithoutExtension}.jpg`, //-slice000
         previous_id: dircopyPluginInstance.data.id
       }
 
@@ -214,8 +224,8 @@ class ChrisIntegration {
       const covidnetPlugin = (await client.getPlugins({ "name_exact": pluginNeeded })).getItems()[0];
       const plcovidnet_data: PlcovidnetData = {
         previous_id: imgConverterInstance.data.id,
-        title: img.fname,
-        imagefile: `${filename}.jpg`
+        title: "COVIDNET",
+        imagefile: `${filenameWithoutExtension}.jpg`
       }
 
       if (covidnetPlugin === undefined || covidnetPlugin.data === undefined) {
@@ -321,6 +331,7 @@ class ChrisIntegration {
    * TStudyInstance of the provided size (limit)
    * @param {number} offset Page offset
    * @param {number} limit Desired number of TStudyInstance to receive
+   * @param {string} filter Filter string used for MRN search
    * @param {number} max_id Maximum Feed ID search parameter
    */
   static async getPastAnalyses(offset: number, limit: number, filter: string, max_id?: number): Promise<[TStudyInstance[], number, boolean]> {
@@ -343,7 +354,7 @@ class ChrisIntegration {
       const feeds: FeedList = await client.getFeeds({
         limit: limit,
         offset: curOffset,
-        name: filter,
+        name: !!filter ? this.getFeedName(filter): "", // get feed name based on filter, which should be the patientID/MRN
         max_id
       });
 
@@ -425,7 +436,7 @@ class ChrisIntegration {
    */
   static async getResultsAndClassesFromFeedIds(feedIds: number[]): Promise<TAnalysisResults> {
     const series: ISeries[] = await Promise.all(feedIds.map(async (id: number): Promise<ISeries> => {
-      const covidnetPlugin = await this.getCovidnetPluginInstanceFromFeedId(id);
+      const covidnetPlugin = await this.getCovidnetPluginInstanceFromFeedId(id, true);
       return await this.getCovidnetResults(covidnetPlugin);
     }));
     
@@ -435,15 +446,20 @@ class ChrisIntegration {
   /**
    * Gets covidnet plugin instance that belongs to the given Feed
    * @param {number} feedId Feed ID
+   * @param {boolean} model True for model plugin instance, false for most recently used plugin instance
    * @return {Promise<PluginInstance>} covidnet plugin instance
    */
-  static async getCovidnetPluginInstanceFromFeedId(feedId: number): Promise<PluginInstance> {
+  static async getCovidnetPluginInstanceFromFeedId(feedId: number, model: boolean = false): Promise<PluginInstance> {
     const client: Client = ChrisAPIClient.getClient();
     const pluginData = await client.getPluginInstances({
       feed_id: feedId,
       plugin_name: BASE_COVIDNET_MODEL_PLUGIN_NAME
     });
-    return pluginData.getItems()?.[0];
+
+    const modelSet: Set<String> = new Set([...Object.values(PluginModels.XrayModels), ...Object.values(PluginModels.CTModels)]);
+
+    // Done under the assumption that only one model plugin is being used, otherwise will need to be more specific in parameters
+    return model ? pluginData.getItems()?.filter(item => modelSet.has(item.data.plugin_name))[0] : pluginData.getItems()?.[0];
   }
 
   /**
@@ -461,7 +477,10 @@ class ChrisIntegration {
     const prediction = await this.fetchJsonFiles(predictionFileId);
     const severityFileId =  files.filter((file: any) => file.data.fname.replace(/^.*[\\\/]/, '') === "severity.json")?.[0]?.data?.id;
     const severity = await this.fetchJsonFiles(severityFileId);
-    const imageFileId =  files.filter((file: any) => file.data.fname.match(/\.[0-9a-z]+$/i)[0] === ".jpg")?.[0]?.data?.id;
+    const fileExtensions = /^(jpg|png|jpeg)$/i;
+    const imageFileId =  files.filter(
+        (file: any) => !!file.data.fname.split('.').pop().match(fileExtensions)
+    )?.[0]?.data?.id;
     
     let imageUrl: string = "";
     if (imageFileId) {
@@ -501,11 +520,11 @@ class ChrisIntegration {
     }
   }
 
-  static async fetchPluginInstanceFromId(id: number): Promise<PluginInstance> {
-    const client: Client = ChrisAPIClient.getClient();
-    const pluginData = await client.getPluginInstances({ id });
-    return pluginData.getItems()?.[0];
-  }
+  // static async fetchPluginInstanceFromId(id: number): Promise<PluginInstance> {
+  //   const client: Client = ChrisAPIClient.getClient();
+  //   const pluginData = await client.getPluginInstances({ id });
+  //   return pluginData.getItems()?.[0];
+  // }
 
   static async fetchJsonFiles(fileId: string): Promise<{ [field: string]: any }> {
     if (!fileId) {
@@ -554,8 +573,9 @@ class ChrisIntegration {
     const client: any = ChrisAPIClient.getClient();
     const pluginfiles = await this.findFilesGeneratedByPlugin(covidnetPluginId);
     let imgName: string = '';
+    const fileExtensions = /^(jpg|png|jpeg)$/i;
     pluginfiles.forEach(file => {
-      if (file.data.fname.split('.').pop() === 'jpg') {
+      if (!!file.data.fname.split('.').pop().match(fileExtensions)) {
         imgName = file.data.fname.split('/').pop()
       }
     })

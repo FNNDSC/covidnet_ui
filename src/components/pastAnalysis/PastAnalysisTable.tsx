@@ -1,5 +1,5 @@
-import { InputGroup, InputGroupText, Spinner, TextInput } from "@patternfly/react-core";
-import { FilterIcon, SearchIcon } from "@patternfly/react-icons";
+import { InputGroup, InputGroupText, Spinner, TextInput, Flex, FlexItem } from "@patternfly/react-core";
+import { FilterIcon, SearchIcon, CheckCircleIcon, ExclamationCircleIcon, ImageIcon } from "@patternfly/react-icons";
 import { css } from "@patternfly/react-styles";
 import styles from "@patternfly/react-styles/css/components/Table/table";
 import { expandable, Table, TableBody, TableHeader } from "@patternfly/react-table";
@@ -9,7 +9,6 @@ import { AppContext } from "../../context/context";
 import { TStudyInstance } from "../../context/reducers/analyseReducer";
 import ChrisIntegration, { pluginData, TAnalysisResults, PluginPollStatus } from "../../services/chris_integration";
 import SeriesTable from "./seriesTable";
-import { Badge } from "@patternfly/react-core";
 import { calculatePatientAge } from "../../shared/utils";
 import useInterval from "../../shared/useInterval";
 import { RESULT_POLL_INTERVAL } from "../../app.config";
@@ -122,16 +121,17 @@ const PastAnalysisTable: React.FC = () => {
 
   const columns = [
     {
-      title: "Study",
+      title: "Status",
       cellFormatters: [expandable]
     },
-    "Study Date", "Patient MRN", "Patient DOB", "Analysis Created", ""
+    "Study", "Study Date", "# Images", "Patient MRN", "Patient DOB", "Analysis Created"
   ]
   const [rows, setRows] = useState<(tableRowsChild | tableRowsParent)[]>([])
 
-  // Stores an array of the "Analysis Created" property of the rows of page 0 of the table
-  // Used to identify which rows are new and need to be highlighted green
-  const newRowsRef = useRef<string[]>([]);
+  // Stores an array of either empty arrays or arrays with the feedIds for each row
+  const currRowsFeedIdsRef = useRef<number[][]>([]);
+  // Stores a list of the feeds that have just finished
+  const finishedFeedsRef = useRef<number[]>([]);
 
   // Reset table and update the maxFeedId to the latest Feed ID in Swift
   const updateMaxFeedId = async () => {
@@ -218,8 +218,8 @@ const PastAnalysisTable: React.FC = () => {
         return !finishedFeeds.includes(id);
       });
   
-      // Right before refreshing table, get a list of all the "Analysis Created" properties on page 0
-      newRowsRef.current = tableState.storedPages[0].filter((study: TStudyInstance) => !study.pluginStatuses.jobsRunning).map((study: TStudyInstance) => study.analysisCreated);
+      // Before refreshing the table, keep track of finishedFeeds
+      finishedFeedsRef.current = finishedFeeds;
 
       tableDispatch({
         type: TableReducerActions.UPDATE_PROCESSING_FEED_IDS,
@@ -232,34 +232,40 @@ const PastAnalysisTable: React.FC = () => {
 
   const updateRows = (listOfAnalyses: TStudyInstance[]) => {
     const newRows: (tableRowsChild | tableRowsParent)[] = [];
+    const currRowsFeedIds: number[][] = [];
     for (const analysis of listOfAnalyses) {
       const indexInRows = newRows.length;
       const isProcessing = !!analysis.pluginStatuses.jobsRunning;
-      let analysisCreated;
-      let badges;
-      if (isProcessing) {
-        analysisCreated = {
-          title: (<div><Spinner size="md" /> Processing</div>)
-        };
-        badges = "";
-      } else {
-        analysisCreated = analysis.analysisCreated;
-        badges = {
-          title: (
-          <>
-            {<Badge className="badge-margin" isRead={!analysis.feedIds.length}>{analysis.feedIds.length}</Badge>}
-            {<Badge className="badge-danger" isRead={!analysis.pluginStatuses.jobsErrored}>{analysis.pluginStatuses.jobsErrored}</Badge>}
-          </>)
-        };
+      const analysisCreated = isProcessing ? { title: (<div><Spinner size="md" /> Processing</div>) } : analysis.analysisCreated;
+      let status;
+      const numImagesOutput = { title: (
+        <Flex alignItems= {{ default: "alignItemsCenter"}}>
+          <FlexItem>
+            <ImageIcon size="md"/>
+            </FlexItem>
+            <FlexItem> 
+              {analysis.feedIds.length}
+            </FlexItem>
+            </Flex>
+            )};
+
+      if(isProcessing){
+        status = { title: (<Spinner size="md" />) };
+      }else if(analysis.pluginStatuses.jobsErrored){
+        status = { title: (<ExclamationCircleIcon size="md" color="crimson" />) };
+      }else{
+        status = { title: (<CheckCircleIcon size="md" color="green" />) };
       }
 
+
       const cells: any[] = [
+        status,
         analysis.dcmImage.StudyDescription,
         analysis.dcmImage.StudyDate,
+        numImagesOutput,
         analysis.dcmImage.PatientID,
         `${analysis.dcmImage.PatientBirthDate} (${calculatePatientAge(analysis.dcmImage.PatientBirthDate)}y)`,
         analysisCreated,
-        badges
       ];
 
       // Top-level row
@@ -270,6 +276,8 @@ const PastAnalysisTable: React.FC = () => {
         isProcessing
       });
 
+      currRowsFeedIds.push(analysis.feedIds);
+
       // Blank nested row
       if (analysis.feedIds.length > 0) {
         newRows.push({
@@ -278,13 +286,17 @@ const PastAnalysisTable: React.FC = () => {
           fullWidth: true,
           cells: []
         });
+
+        currRowsFeedIds.push([]);
       }
     }
     setRows(newRows);
+    currRowsFeedIdsRef.current = currRowsFeedIds;
   }
 
   const onCollapse = async (event: any, rowKey: number, isOpen: any) => {
-    newRowsRef.current = []; // Reset to prevent highlight animation from playing again
+    finishedFeedsRef.current = []; // Reset to prevent highlight animation from playing again
+
     const rowsCopy = [...rows];
     
     const parentRow = rowsCopy[rowKey];
@@ -314,21 +326,19 @@ const PastAnalysisTable: React.FC = () => {
     const {
       trRef,
       className,
-      rowProps,
-      row: { isExpanded, cells },
+      rowProps :{ rowIndex },
+      row: { isExpanded, cells},
       ...props
     } = tableRow;
 
-
-    const analysisCreated = cells[4] // 4 is the index of Analysis Created column
-    const isAnalyzing: boolean = analysisCreated && analysisCreated.title;
     // Style the current row
     let backgroundStyle = {};
-    if (isAnalyzing) {
+    const row = rows[rowIndex] as tableRowsParent;
+
+    if(cells.length > 0 && row.isProcessing){
       backgroundStyle = { "backgroundColor": "#F9E0A2" }; // Processing rows
-    } else if (newRowsRef.current?.length > 0 && !newRowsRef.current.includes(analysisCreated)) {
+    } else if (cells.length > 0 && finishedFeedsRef.current.length > 0 && currRowsFeedIdsRef.current[rowIndex].filter((v) => finishedFeedsRef.current.includes(v)).length > 0) {
       backgroundStyle = { "animation": "new-row-highlight-animation 2s linear" }; // Newly added rows
-      newRowsRef.current = [...newRowsRef.current, analysisCreated];
     } else {
       backgroundStyle = { "backgroundColor": "#FFFFFF" }; // Default
     }
@@ -355,7 +365,8 @@ const PastAnalysisTable: React.FC = () => {
   }), 500);
 
   const searchMRN = (filter: string) => {
-    newRowsRef.current = []; // Reset to prevent highlight animation from playing again
+    finishedFeedsRef.current = []; // Reset to prevent highlight animation from playing again
+
     debouncedFilterUpdate(filter);
   }
   const decrementPage = () => {
@@ -382,7 +393,7 @@ const PastAnalysisTable: React.FC = () => {
           </div>
 
           <div className="page-navigation-buttons">
-            <button className="pf-c-button pf-m-inline pf-m-tertiary pf-m-display-sm p pf-u-mr-md" type="button" onClick={decrementPage} disabled={isLoading || tableState.page == 0}>
+            <button className="pf-c-button pf-m-inline pf-m-tertiary pf-m-display-sm p pf-u-mr-md" type="button" onClick={decrementPage} disabled={isLoading || tableState.page === 0}>
               <span className="pf-c-button__icon pf-m-end">
                 <i className="fas fa-arrow-left" aria-hidden="true"></i>
               </span>

@@ -78,12 +78,14 @@ const StudyFilters = () => {
               aria-label="Maximum Study Date"
             />
           </SplitItem>
+          <SplitItem>
+            <div className="InputRowField">
+              <Button variant="secondary" onClick={clearFilters}>
+              <b>Clear Filters</b>
+              </Button>
+            </div>
+          </SplitItem>
         </Split>
-      </div>
-      <div className="InputRowField">
-        <Button variant="secondary" onClick={clearFilters}>
-          <b>Clear Filters</b>
-        </Button>
       </div>
     </div>
   )
